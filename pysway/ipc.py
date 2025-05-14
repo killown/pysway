@@ -22,12 +22,12 @@ class SwayIPC:
     def _connect(self) -> None:
         self.sock.connect(self._find_socket())
 
-    def send(self, msg_type: int, payload="") -> None:
+    def _send(self, msg_type: int, payload="") -> None:
         payload_bytes = payload.encode("utf-8")
         header = struct.pack("=6sII", b"i3-ipc", len(payload_bytes), msg_type)
         self.sock.sendall(header + payload_bytes)
 
-    def recv(self) -> Optional[Dict[str, Any]]:
+    def _recv(self) -> Optional[Dict[str, Any]]:
         buffer = b""
         while len(buffer) < 14:
             chunk = self.sock.recv(14 - len(buffer))
@@ -48,8 +48,8 @@ class SwayIPC:
         return json.loads(buffer[14 : 14 + length])
 
     def get_tree(self) -> Optional[Dict[str, Any]]:
-        self.send(GET_TREE)
-        return self.recv()
+        self._send(GET_TREE)
+        return self._recv()
 
     def list_views(self, tree: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract all views with titles and app_ids"""
@@ -110,29 +110,46 @@ class SwayIPC:
                     return output if key is None else output.get(key)
         return None
 
-    def get_focused_output(self, key=None) -> Optional[Dict[str, Any]]:
-        """Get info about the currently focused output."""
+    def get_focused_output(self):
+        """Find the output of the currently focused container"""
         tree = self.get_tree()
 
-        def traverse(node) -> Optional[Dict[str, Any]]:
+        def find_focused_node(node):
             if isinstance(node, dict):
                 if node.get("focused"):
                     return node
-                for child in node.get("nodes", []):
-                    result = traverse(child)
+                for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                    result = find_focused_node(child)
                     if result:
                         return result
             return None
 
-        focused_node = traverse(tree)
+        focused_node = find_focused_node(tree)
         if not focused_node:
             return None
 
-        # Traverse again to find corresponding output
+        # Traverse upward until we reach the output
         while focused_node.get("type") != "output":
             parent = focused_node.get("parent")
             if not parent:
                 return None
             focused_node = parent
 
-        return focused_node if key is None else focused_node.get(key)
+        return focused_node
+
+    def list_outputs(self) -> Optional[List[Dict[str, Any]]]:
+        """List all outputs (outputs are top-level nodes with type == 'output')"""
+        tree = self.get_tree()
+        return [node for node in tree.get("nodes", []) if node.get("type") == "output"]
+
+    def get_output_by_name(self, name) -> Optional[Dict[str, Any]]:
+        """Find output by its name (e.g., 'HDMI-A-1')"""
+        outputs = self.list_outputs()
+        for output in outputs:
+            if output.get("name") == name:
+                return output
+        return None
+
+    def focus_output(self, output_id) -> None:
+        """Focus an output by ID using Sway command"""
+        self._send(0, f"[id={output_id}] focus")
