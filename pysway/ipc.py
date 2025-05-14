@@ -6,6 +6,8 @@ import os
 
 # Message type from sway IPC docs
 GET_TREE = 4
+GET_SEATS = 101
+GET_INPUTS = 100
 
 
 class SwayIPC:
@@ -51,7 +53,38 @@ class SwayIPC:
         self._send(GET_TREE)
         return self._recv()
 
-    def list_views(self, tree: Dict[str, Any]) -> List[Dict[str, Any]]:
+    # FIXME: move to stipc.py
+    def run_command(self, cmd: str) -> None:
+        """
+        Run a raw Sway command via IPC.
+        """
+        self._send(0, cmd)
+
+    # FIXME: move to stipc.py
+    def list_seats(self) -> Optional[Dict[str, Any]]:
+        """
+        Get list of available seats with their capabilities.
+
+        Returns:
+            List of seat dictionaries or None if failed.
+        """
+        self._send(GET_SEATS)
+        response = self._recv()
+        return response
+
+    # FIXME: move to stipc.py
+    def list_inputs(self) -> Optional[Dict[str, Any]]:
+        """
+        Get list of available inputs with their capabilities.
+
+        Returns:
+            List of input dictionaries or None if failed.
+        """
+        self._send(GET_INPUTS)
+        response = self._recv()
+        return response
+
+    def list_views(self) -> List[Dict[str, Any]]:
         """Extract all views with titles and app_ids"""
         views = []
 
@@ -64,6 +97,7 @@ class SwayIPC:
                 for child in node.get("nodes", []) + node.get("floating_nodes", []):
                     traverse(child)
 
+        tree = self.get_tree()
         traverse(tree)
         return views
 
