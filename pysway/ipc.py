@@ -176,6 +176,7 @@ class SwayIPC:
         tree = self.get_tree()
         return [node for node in tree.get("nodes", []) if node.get("type") == "output"]
 
+    # FIXME: move to utils.py
     def get_output_by_name(self, name) -> Optional[Dict[str, Any]]:
         """Find output by its name (e.g., 'HDMI-A-1')"""
         outputs = self.list_outputs()
