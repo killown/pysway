@@ -217,7 +217,7 @@ class SwayIPC:
         Subscribe to one or more event types.
         If no events are specified, subscribes to all available events.
 
-        Valid event types: workspace, window, output, mode, barconfig_update, binding, shutdown
+        Valid event types: workspace, window, output, mode, barconfig_update, binding, shutdown, tick, bar_state_update, input
         """
         valid_events = [
             "workspace",
@@ -227,6 +227,9 @@ class SwayIPC:
             "barconfig_update",
             "binding",
             "shutdown",
+            "tick",
+            "bar_state_update",
+            "input",
         ]
         if events is None:
             events = valid_events  # Watch all events by default
