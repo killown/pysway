@@ -5,9 +5,21 @@ from typing import Dict, Any, Optional, List
 import os
 
 # Message type from sway IPC docs
+RUN_COMMAND = 0
+GET_WORKSPACES = 1
+SUBSCRIBE = 2
+GET_OUTPUTS = 3
 GET_TREE = 4
-GET_SEATS = 101
+GET_MARKS = 5
+GET_BAR_CONFIG = 6
+GET_VERSION = 7
+GET_BINDING_MODES = 8
+GET_CONFIG = 9
+SEND_TICK = 10
+SYNC = 11
+GET_BINDING_STATE = 12
 GET_INPUTS = 100
+GET_SEATS = 101
 
 
 class SwayIPC:
@@ -29,6 +41,15 @@ class SwayIPC:
         header = struct.pack("=6sII", b"i3-ipc", len(payload_bytes), msg_type)
         self.sock.sendall(header + payload_bytes)
 
+    def get_event(self) -> Optional[Dict[str, Any]]:
+        """
+        Read a single event from the IPC socket.
+
+        Returns:
+            Optional[Dict]: An event dictionary or None on failure.
+        """
+        return self._recv()
+
     def _recv(self) -> Optional[Dict[str, Any]]:
         buffer = b""
         while len(buffer) < 14:
@@ -36,18 +57,20 @@ class SwayIPC:
             if not chunk:
                 return None
             buffer += chunk
-
         magic, length, msg_type = struct.unpack("=6sII", buffer[:14])
         if magic != b"i3-ipc":
             raise ValueError("Invalid IPC magic")
-
         while len(buffer) < 14 + length:
             chunk = self.sock.recv(length + 14 - len(buffer))
             if not chunk:
                 return None
             buffer += chunk
 
-        return json.loads(buffer[14 : 14 + length])
+        try:
+            data = json.loads(buffer[14 : 14 + length])
+            return data
+        except json.JSONDecodeError:
+            return None
 
     def get_tree(self) -> Optional[Dict[str, Any]]:
         self._send(GET_TREE)
@@ -188,3 +211,40 @@ class SwayIPC:
     def focus_output(self, output_id) -> None:
         """Focus an output by ID using Sway command"""
         self._send(0, f"[id={output_id}] focus")
+
+    def watch(self, events=None):
+        """
+        Subscribe to one or more event types.
+        If no events are specified, subscribes to all available events.
+
+        Valid event types: workspace, window, output, mode, barconfig_update, binding, shutdown
+        """
+        valid_events = [
+            "workspace",
+            "window",
+            "output",
+            "mode",
+            "barconfig_update",
+            "binding",
+            "shutdown",
+        ]
+        if events is None:
+            events = valid_events  # Watch all events by default
+        else:
+            # Validate provided events
+            invalid = [e for e in events if e not in valid_events]
+            if invalid:
+                raise ValueError(
+                    f"Invalid event(s): {', '.join(invalid)}. "
+                    f"Valid events: {', '.join(valid_events)}"
+                )
+
+        payload = json.dumps(events)
+        self._send(SUBSCRIBE, payload)
+
+        response = self._recv()
+        if isinstance(response, dict) and response.get("success", False):
+            print(f"Watching events: {', '.join(events)}\n{'-' * 40}")
+            return True
+        else:
+            raise RuntimeError("Failed to subscribe to Sway events.")
