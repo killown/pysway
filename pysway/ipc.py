@@ -41,7 +41,7 @@ class SwayIPC:
         header = struct.pack("=6sII", b"i3-ipc", len(payload_bytes), msg_type)
         self.sock.sendall(header + payload_bytes)
 
-    def get_event(self) -> Optional[Dict[str, Any]]:
+    def read_next_event(self) -> Optional[Dict[str, Any]]:
         """
         Read a single event from the IPC socket.
 
@@ -72,6 +72,18 @@ class SwayIPC:
         except json.JSONDecodeError:
             return None
 
+    def is_connected(self) -> bool:
+        """
+        Check if the Sway socket is still connected.
+        Sends zero-byte data to check if the connection is alive.
+        """
+        try:
+            # Try to send 0 bytes (doesn't block or send real data)
+            self.sock.send(b"")
+            return True
+        except OSError:
+            return False
+
     def get_tree(self) -> Optional[Dict[str, Any]]:
         self._send(GET_TREE)
         return self._recv()
@@ -95,8 +107,76 @@ class SwayIPC:
         response = self._recv()
         return response
 
+    def close(self) -> None:
+        """Close the Sway IPC socket connection."""
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            # Socket may already be closed or disconnected
+            pass
+        finally:
+            self.sock.close()
+
+    def close_view(self, view_id: int) -> bool:
+        """
+        Close a view by its ID.
+
+        Args:
+            view_id (int): The numeric ID of the view to close
+
+        Returns:
+            bool: True if command was sent successfully, False otherwise
+        """
+        try:
+            self._send(0, f"[id={view_id}] kill")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to close view {view_id}: {e}")
+            return False
+
+    def set_view_alpha(self, view_id: int, opacity: float) -> None:
+        """
+        Set the opacity of a view (0.0 = fully transparent, 1.0 = opaque)
+
+        Args:
+            view_id (int): ID of the view
+            opacity (float): Opacity value between 0.0 and 1.0
+        """
+        if not (0.0 <= opacity <= 1.0):
+            raise ValueError("Opacity must be between 0.0 and 1.0")
+        self._send(0, f"[id={view_id}] opacity {opacity}")
+
+    def set_workspace(
+        self, x: int, y: int, view_id: Optional[int] = None
+    ) -> Optional[bool]:
+        tree = self.get_tree()
+        if tree:
+            outputs = [o for o in tree.get("nodes", []) if o.get("type") == "output"]
+
+            for output in outputs:
+                geometry = output.get("rect", {})
+                ox = geometry.get("x", 0)
+                oy = geometry.get("y", 0)
+                width = geometry.get("width", 1920)
+                height = geometry.get("height", 1080)
+
+                # Check if point (x, y) is inside this output
+                if ox <= x < ox + width and oy <= y < oy + height:
+                    workspace = output.get("current_workspace")
+                    if not workspace:
+                        continue
+
+                    if view_id is None:
+                        return self._send(0, f"workspace {workspace}")
+                    else:
+                        return self._send(
+                            0, f"[id={view_id}] move workspace {workspace}"
+                        )
+
+            return False
+
     # FIXME: move to stipc.py
-    def list_inputs(self) -> Optional[Dict[str, Any]]:
+    def list_input_devices(self) -> Optional[Dict[str, Any]]:
         """
         Get list of available inputs with their capabilities.
 
@@ -211,6 +291,51 @@ class SwayIPC:
     def focus_output(self, output_id) -> None:
         """Focus an output by ID using Sway command"""
         self._send(0, f"[id={output_id}] focus")
+
+    def set_view_minimized(self, view_id: int, state: bool) -> None:
+        """
+        Set the minimized state of a view
+
+        Args:
+            view_id (int): ID of the view to modify
+            state (bool): True to minimize, False to unminimize
+        """
+        action = "enable" if state else "disable"
+        self._send(0, f"[id={view_id}] minimize {action}")
+
+    def set_view_maximized(self, view_id: int, state: bool) -> None:
+        """
+        Set the maximized state of a view
+
+        Args:
+            view_id (int): ID of the view to modify
+            state (bool): True to maximize, False to restore
+        """
+        action = "enable" if state else "disable"
+        self._send(0, f"[id={view_id}] maximize {action}")
+
+    def set_view_fullscreen(self, view_id: int, state: bool) -> None:
+        """
+        Set the fullscreen state of a view
+
+        Args:
+            view_id (int): ID of the view to modify
+            state (bool): True to enter fullscreen, False to exit
+        """
+        action = "enable" if state else "disable"
+        self._send(0, f"[id={view_id}] fullscreen {action}")
+
+    def set_view_focus(self, view_id: int) -> None:
+        """
+        Set focus to a specific view by its ID
+
+        Args:
+            view_id (int): The numeric ID of the view to focus
+        """
+        try:
+            self._send(0, f"[id={view_id}] focus")
+        except Exception as e:
+            print(f"[ERROR] Failed to focus view {view_id}: {e}")
 
     def watch(self, events=None):
         """
