@@ -84,6 +84,18 @@ class SwayIPC:
         except OSError:
             return False
 
+    def is_xwayland_view(self, view: Dict[str, Any]) -> bool:
+        """
+        Determine if a view is an XWayland client
+
+        Args:
+            view (dict): A node from the sway tree
+
+        Returns:
+            bool: True if XWayland, False otherwise
+        """
+        return view.get("shell") == "xwayland"
+
     def get_tree(self) -> Optional[Dict[str, Any]]:
         self._send(GET_TREE)
         return self._recv()
@@ -175,6 +187,58 @@ class SwayIPC:
 
             return False
 
+    def configure_view(
+        self,
+        view_id: int,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        output_id: Optional[int] = None,
+    ) -> bool:
+        """
+        Configure a view's position and size, handling both Wayland and XWayland views
+
+        Args:
+            view_id (int): The internal ID of the view
+            x (int): X coordinate
+            y (int): Y coordinate
+            w (int): Width
+            h (int): Height
+            output_id (Optional[int]): Output ID to move to
+
+        Returns:
+            bool: True if successful
+        """
+        view = self.get_view(view_id)
+        if not view:
+            print(f"View {view_id} not found")
+            return False
+
+        if self.is_xwayland_view(view):
+            selector = f"[id={view_id}]"
+        else:
+            selector = f"[con_id={view_id}]"
+
+        try:
+            # Optionally move to a specific output first
+            if output_id is not None:
+                self._send(0, f"{selector} move to output id {output_id}")
+
+            # Set absolute position and size
+            self._send(0, f"{selector} floating enable")
+
+            # skip moving the view
+            if x > 0 or y > 0:
+                self._send(0, f"{selector} move position {x} {y}")
+
+            self._send(0, f"{selector} resize set {w} {h}")
+
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to configure view {view_id}: {e}")
+            return False
+
     # FIXME: move to stipc.py
     def list_input_devices(self) -> Optional[Dict[str, Any]]:
         """
@@ -204,20 +268,40 @@ class SwayIPC:
         traverse(tree)
         return views
 
-    def get_view(self, view_id: int) -> Optional[Dict[str, Any]]:
-        tree = self.get_tree()
+    def get_view(self, view_id: int, max_retries=10) -> Optional[Dict[str, Any]]:
+        """
+        Get a view by ID with retry logic to handle async updates
 
-        def traverse(node):
-            if isinstance(node, dict):
-                if node.get("id") == view_id:
-                    return node
-                for child in node.get("nodes", []) + node.get("floating_nodes", []):
-                    result = traverse(child)
-                    if result:
-                        return result
-            return None
+        Args:
+            view_id (int): ID of the view to find
+            max_retries (int): Maximum number of times to try
+            delay (float): Time to wait between retries
 
-        return traverse(tree)
+        Returns:
+            Optional[Dict]: View data if found, None otherwise
+        """
+        # for some reason sway doesn't always return the view when using get_tree
+        # this is a temporary solution to make it always return the view
+        for attempt in range(max_retries):
+            tree = self.get_tree()
+            if not tree:
+                continue
+
+            def traverse(node):
+                if isinstance(node, dict):
+                    if node.get("id") == view_id:
+                        return node
+                    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                        result = traverse(child)
+                        if result:
+                            return result
+                return None
+
+            result = traverse(tree)
+            if result:
+                return result
+
+        return None
 
     def get_focused_view(self) -> Optional[Dict[str, Any]]:
         tree = self.get_tree()
