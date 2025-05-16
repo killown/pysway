@@ -100,14 +100,12 @@ class SwayIPC:
         self._send(GET_TREE)
         return self._recv()
 
-    # FIXME: move to stipc.py
     def run_command(self, cmd: str) -> None:
         """
         Run a raw Sway command via IPC.
         """
         self._send(0, cmd)
 
-    # FIXME: move to stipc.py
     def list_seats(self) -> Optional[Dict[str, Any]]:
         """
         Get list of available seats with their capabilities.
@@ -239,7 +237,6 @@ class SwayIPC:
             print(f"[ERROR] Failed to configure view {view_id}: {e}")
             return False
 
-    # FIXME: move to stipc.py
     def list_input_devices(self) -> Optional[Dict[str, Any]]:
         """
         Get list of available inputs with their capabilities.
@@ -362,15 +359,6 @@ class SwayIPC:
         """List all outputs (outputs are top-level nodes with type == 'output')"""
         tree = self.get_tree()
         return [node for node in tree.get("nodes", []) if node.get("type") == "output"]
-
-    # FIXME: move to utils.py
-    def get_output_by_name(self, name) -> Optional[Dict[str, Any]]:
-        """Find output by its name (e.g., 'HDMI-A-1')"""
-        outputs = self.list_outputs()
-        for output in outputs:
-            if output.get("name") == name:
-                return output
-        return None
 
     def focus_output(self, output_id) -> None:
         """Focus an output by ID using Sway command"""
