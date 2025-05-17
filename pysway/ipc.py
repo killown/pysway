@@ -1,6 +1,7 @@
 import socket
 import struct
 import json
+import time
 from typing import Dict, Any, Optional, List
 import os
 
@@ -315,45 +316,38 @@ class SwayIPC:
 
         return traverse(tree)
 
-    def get_output(self, output_id: int, key=None) -> Optional[Dict[str, Any]]:
+    def get_output(
+        self, output_id: int, key=None, max_retries=100
+    ) -> Optional[Dict[str, Any]]:
         """Get info about a specific output by ID."""
-        tree = self.get_tree()
-        if tree:
-            outputs = [
-                node for node in tree.get("nodes", []) if node.get("type") == "output"
-            ]
+        tree = None
+        for attempt in range(max_retries):
+            tree = self.get_tree()
+            if not hasattr(tree, "get"):
+                continue
+            else:
+                if tree:
+                    outputs = [
+                        node
+                        for node in tree.get("nodes", [])
+                        if node.get("type") == "output"
+                    ]
 
-            for output in outputs:
-                if output.get("id") == output_id:
-                    return output if key is None else output.get(key)
-        return None
-
-    def get_focused_output(self):
-        """Find the output of the currently focused container"""
-        tree = self.get_tree()
-
-        def find_focused_node(node):
-            if isinstance(node, dict):
-                if node.get("focused"):
-                    return node
-                for child in node.get("nodes", []) + node.get("floating_nodes", []):
-                    result = find_focused_node(child)
-                    if result:
-                        return result
-            return None
-
-        focused_node = find_focused_node(tree)
-        if not focused_node:
-            return None
-
-        # Traverse upward until we reach the output
-        while focused_node.get("type") != "output":
-            parent = focused_node.get("parent")
-            if not parent:
+                    for output in outputs:
+                        if output.get("id") == output_id:
+                            return output if key is None else output.get(key)
                 return None
-            focused_node = parent
 
-        return focused_node
+    def get_focused_output(self, max_retries=100):
+        """Return the currently focused output using root 'focus' list"""
+        tree = None
+        for attempt in range(max_retries):
+            tree = self.get_tree()
+            if not hasattr(tree, "get"):
+                continue
+            else:
+                if hasattr(tree, "get"):
+                    return tree.get("focus", [None])[0]
 
     def list_outputs(self) -> Optional[List[Dict[str, Any]]]:
         """List all outputs (outputs are top-level nodes with type == 'output')"""
@@ -444,7 +438,6 @@ class SwayIPC:
 
         response = self._recv()
         if isinstance(response, dict) and response.get("success", False):
-            print(f"Watching events: {', '.join(events)}\n{'-' * 40}")
-            return True
+            return response
         else:
             raise RuntimeError("Failed to subscribe to Sway events.")
