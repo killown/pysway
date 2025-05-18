@@ -1,11 +1,29 @@
-from pysway.ipc import SwayIPC
 from typing import Dict, Any, Optional, List
 from itertools import islice, cycle
 
+# Message type from sway IPC docs
+RUN_COMMAND = 0
+GET_WORKSPACES = 1
+SUBSCRIBE = 2
+GET_OUTPUTS = 3
+GET_TREE = 4
+GET_MARKS = 5
+GET_BAR_CONFIG = 6
+GET_VERSION = 7
+GET_BINDING_MODES = 8
+GET_CONFIG = 9
+SEND_TICK = 10
+SYNC = 11
+GET_BINDING_STATE = 12
+GET_INPUTS = 100
+GET_SEATS = 101
+BIND_INPUT = 102
 
-class Utils:
-    def __init__(self):
-        self._sock = SwayIPC()
+
+class SwayUtils:
+    def __init__(self, socket):
+        self._sock = socket
+        self.floating_views = {}
 
     def show_desktop(self, output_id: int) -> None:
         """
@@ -221,58 +239,235 @@ class Utils:
                     return output
             return None
 
-    def get_next_workspace_with_views(self) -> Optional[int]:
-        """
-        Get the next non-empty workspace ID from the currently focused output.
-        Returns:
-            Optional[int]: The ID of the next workspace with views, or None if none found.
-        """
-
-        # Step 1: Get all workspaces from focused output
+    def get_next_workspace_with_views(self) -> Optional[str]:
         workspaces = self.get_workspaces_from_focused_output()
         if not workspaces:
             return None
 
-        # Step 2: Filter only workspaces with views
-        def has_view(workspace):
-            for node in workspace.get("nodes", []):
+        seen = set()
+        non_empty_names = []
+
+        for ws in workspaces:
+            name = ws["name"]
+            if name in seen:
+                continue
+            seen.add(name)
+
+            for node in ws.get("nodes", []):
                 if isinstance(node, dict) and node.get("type") in [
                     "con",
                     "floating_con",
                 ]:
-                    return True
-            return False
+                    non_empty_names.append(name)
+                    break
 
-        non_empty_ids = [ws["id"] for ws in workspaces if has_view(ws)]
-        if not non_empty_ids:
+        if not non_empty_names:
             return None
 
-        # Step 3: Get current workspace ID
         current_workspace = self.get_focused_workspace()
         if not current_workspace:
-            return non_empty_ids[0]  # fallback to first if can't detect current
+            return non_empty_names[0]
 
         try:
-            current_idx = non_empty_ids.index(current_workspace["id"])
+            current_idx = non_empty_names.index(current_workspace["name"])
         except ValueError:
-            return non_empty_ids[0]  # fallback if current not in list
+            return non_empty_names[0]
 
-        # Step 4: Create circular iterator starting after current
-        circular_iter = islice(cycle(non_empty_ids), current_idx + 1, None)
-
-        # Step 5: Return next valid workspace ID
-        for wid in circular_iter:
-            return wid  # returns first match (next in line)
-
-        return None  # should never happen unless list is empty
+        next_idx = (current_idx + 1) % len(non_empty_names)
+        return non_empty_names[next_idx]
 
     def go_next_workspace_with_views(self) -> None:
         """
         Switch to the next workspace with views using workspace IDs.
         Only considers non-empty workspaces and respects Sway's natural order.
         """
-        workspace_id = self.get_next_workspace_with_views()
-        print(workspace_id)
-        if workspace_id is None:
+        workspace_name = self.get_next_workspace_with_views()
+        if workspace_name is None:
             return
-        self._sock.run_command(f"workspace ID {workspace_id}")
+        self._sock.run_command(f"workspace {workspace_name}")
+
+    def move_view_to_workspace(self, view_id: int, workspace_name: str) -> bool:
+        view = self._sock.get_view(view_id)
+        if not view:
+            print(f"View {view_id} not found")
+            return False
+
+        if self._sock.is_xwayland_view(view):
+            selector = f"[id={view_id}]"
+        else:
+            selector = f"[con_id={view_id}]"
+
+        try:
+            self._sock._send(0, f"{selector} move workspace {workspace_name}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to move view {view_id}: {e}")
+            return False
+
+    def move_view_to_new_empty_workspace(self, view_id: int) -> bool:
+        """
+        Moves the specified view to a new or existing empty workspace named after its PID.
+
+        Args:
+            view_id (int): The internal Sway ID of the view to move.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        # Get the view data
+        view = self._sock.get_view(view_id)
+        if not view:
+            print(f"[ERROR] View {view_id} not found.")
+            return False
+
+        # Determine selector based on view type
+        if self._sock.is_xwayland_view(view):
+            selector = f"[id={view_id}]"
+        else:
+            selector = f"[con_id={view_id}]"
+
+        # Get the view's PID
+        pid = view.get("pid")
+        if not pid or not isinstance(pid, int):
+            print(
+                f"[WARNING] View {view_id} has no valid PID. Using fallback workspace name."
+            )
+            workspace_name = "unknown"
+        else:
+            workspace_name = str(pid)
+
+        # Check if the target workspace already exists
+        existing_workspaces = self.get_workspaces_from_focused_output()
+        workspace_names = [ws["name"] for ws in existing_workspaces]
+
+        if workspace_name not in workspace_names:
+            try:
+                # Create the new workspace
+                self._sock.run_command(f"workspace {workspace_name}")
+                print(f"[INFO] Created new workspace '{workspace_name}'")
+            except Exception as e:
+                print(f"[ERROR] Failed to create workspace '{workspace_name}': {e}")
+                return False
+
+        # Move the view to the target workspace
+        try:
+            success = self.move_view_to_workspace(view_id, workspace_name)
+            if success:
+                print(
+                    f"[INFO] Successfully moved view {view_id} to workspace '{workspace_name}'"
+                )
+            else:
+                print(
+                    f"[ERROR] Failed to move view {view_id} to workspace '{workspace_name}'"
+                )
+            return success
+        except Exception as e:
+            print(f"[ERROR] Unexpected error while moving view {view_id}: {e}")
+            return False
+
+    def bind_input(self, identifier: str, command: str, import_str=None) -> None:
+        """
+        Bind a key or mouse button to a Sway command at runtime.
+        To call a Python function, wrap it in `exec python3 -c ...`.
+        """
+        if import_str is None:
+            import_str = """from pysway.ipc import SwayIPC;\
+                            from pysway.extra.utils import SwayUtils;\
+                            sock = SwayIPC();\
+                            utils = SwayUtils(sock);\
+                          """.strip()
+        payload = f'{identifier} exec python3 -c "{import_str}{command}"'
+        print(payload)
+        self._sock._send(BIND_INPUT, payload)
+
+    def go_next_view_in_workspace(self):
+        """
+        Switch focus to the next view in the current workspace.
+        Only considers top-level views (not scratchpad/minimized/etc).
+        """
+        views = None
+        focused_workspace = self.get_focused_workspace()
+        if focused_workspace is None:
+            return
+        views = focused_workspace["nodes"]
+
+        if not views:
+            if "floating_nodes" in focused_workspace:
+                views = focused_workspace["floating_nodes"]
+
+        if len(views) <= 1:
+            return  # No need to switch if there's only one view
+
+        focused_id = self._sock.get_focused_view()["id"]
+        try:
+            idx = next(i for i, v in enumerate(views) if v["id"] == focused_id)
+            next_idx = (idx + 1) % len(views)
+            next_view = views[next_idx]
+            if self._sock.is_xwayland_view(next_view):
+                self._sock.run_command(f"[id={next_view['id']}] focus")
+            else:
+                self._sock.run_command(f"[con_id={next_view['id']}] focus")
+        except StopIteration:
+            # Fallback: just focus any view
+            if views:
+                v = views[0]
+                selector = (
+                    "[id={}]".format(v["id"])
+                    if self._sock.is_xwayland_view(v)
+                    else "[con_id={}]".format(v["id"])
+                )
+                self._sock.run_command(f"{selector} focus")
+
+    def maximize_view(self, view_id: int) -> bool:
+        """
+        Maximize a view to fill the entire current workspace area.
+
+        Args:
+            view_id (int): The internal ID of the view to maximize.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        # Get the focused workspace's geometry
+        workspace = self.get_focused_workspace()
+        if not workspace:
+            print("[ERROR] Could not find focused workspace.")
+            return False
+
+        rect = workspace.get("rect")
+        if not rect:
+            print("[ERROR] Focused workspace has no 'rect' property.")
+            return False
+
+        width = rect.get("width", 1920)
+        height = rect.get("height", 1080)
+
+        # Enable floating mode before resizing
+        view = self._sock.get_view(view_id)
+        if not view:
+            print(f"[ERROR] View with ID {view_id} not found.")
+            return False
+
+        try:
+            if self._sock.is_xwayland_view(view):
+                selector = f"[id={view_id}]"
+            else:
+                selector = f"[con_id={view_id}]"
+
+            self._sock.run_command(f"{selector} floating enable")
+
+            # Resize and reposition the view to fill the workspace
+            success = self._sock.configure_view(
+                view_id=view_id, x=0, y=0, w=width, h=height
+            )
+
+            if success:
+                print(f"[INFO] Successfully maximized view {view_id}.")
+            else:
+                print(f"[ERROR] Failed to maximize view {view_id}.")
+
+            return success
+
+        except Exception as e:
+            print(f"[ERROR] Failed to maximize view {view_id}: {e}")
+            return False
