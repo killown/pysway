@@ -5,7 +5,7 @@ pysway
 
 A Python library to interact with the [Sway](https://swaywm.org ) window manager via its IPC interface.
 
-📦 Features
+Features
 -----------
 
 *   Query the current layout tree of Sway.
@@ -13,14 +13,14 @@ A Python library to interact with the [Sway](https://swaywm.org ) window manager
 *   Run Sway commands programmatically.
 *   Subscribe to real-time events like workspace changes, view focus, output updates, and more.
 
-🧰 Requirements
+Requirements
 ---------------
 
 *   Python 3.6+
 *   Running inside a **Sway session**
 
 
-🚀 Installation
+Installation
 ---------------
 install from source:
 
@@ -28,10 +28,10 @@ install from source:
     cd pysway
     pip install -e .
 
-🔌 Usage Examples
+Usage Examples
 -----------------
 
-### 🖥️ Get the Current Layout Tree
+### Get the Current Layout Tree
 
     from pysway.ipc import SwayIPC
     
@@ -39,7 +39,7 @@ install from source:
     tree = sway.get_tree()
     print(tree)
 
-### 👁️ Get Focused View
+### Get Focused View
 
     focused = sway.get_focused_view()
     if focused:
@@ -47,7 +47,7 @@ install from source:
         print(f"Title: {focused.get('name')}")
     
 
-### 📺 List All Views
+### List All Views
 
     views = sway.list_views()
     for v in views:
@@ -71,7 +71,7 @@ Or use it in code:
         if event:
             print("Event received:", event)
 
-🛠️ Supported Commands
+Supported Commands
 ----------------------
 
 Method
@@ -106,7 +106,7 @@ Focus an output by ID
 
 Subscribe to one or more IPC events
 
-📬 Event Types
+Event Types
 --------------
 
 You can subscribe to these event types:
@@ -122,12 +122,12 @@ You can subscribe to these event types:
 *   `bar_state_update`
 *   `input`
 
-🤝 Contributing
+Contributing
 ---------------
 
 Contributions are welcome! Please read our contribution guidelines before submitting a PR.
 
-📜 License
+License
 ----------
 
 This project is licensed under the MIT License.
